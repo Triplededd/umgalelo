@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-circle-bg text-circle-ink font-sans;
+  }
+  h1, h2, h3 {
+    @apply font-display;
+  }
+}
+
+@keyframes drift-slow {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(4%, 6%) scale(1.08); }
+}
+@keyframes drift-medium {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(-5%, 4%) scale(1.05); }
+}
+@keyframes drift-fast {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(3%, -5%) scale(1.1); }
+}
+.animate-drift-slow { animation: drift-slow 22s ease-in-out infinite; }
+.animate-drift-medium { animation: drift-medium 18s ease-in-out infinite; }
+.animate-drift-fast { animation: drift-fast 15s ease-in-out infinite; }
+
+@layer components {
+  .panel {
+    @apply bg-circle-panel/90 backdrop-blur-sm border border-circle-line rounded-xl shadow-sm;
+  }
+  .btn-primary {
+    @apply bg-circle-navy text-white px-4 py-2 rounded-md font-medium hover:bg-circle-navyDark transition;
+  }
+  .btn-secondary {
+    @apply bg-white border border-circle-line px-4 py-2 rounded-md font-medium hover:bg-circle-bg transition;
+  }
+  .tag-paid {
+    @apply bg-green-50 text-circle-green border border-circle-green/30 px-2 py-0.5 rounded text-xs font-mono;
+  }
+  .tag-unpaid {
+    @apply bg-red-50 text-circle-rust border border-circle-rust/30 px-2 py-0.5 rounded text-xs font-mono;
+  }
+  .tag-turn {
+    @apply bg-yellow-50 text-circle-gold border border-circle-gold/30 px-2 py-0.5 rounded text-xs font-mono;
+  }
+}
