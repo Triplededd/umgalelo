@@ -12,7 +12,7 @@ export default function Setup({ onRegistered }) {
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
-    if (pin.length < 4) return setError("PIN should be at least 4 digits.");
+    if (pin.length < 6) return setError("PIN should be at least 6 digits (Supabase requires this).");
     if (pin !== confirmPin) return setError("PINs don't match.");
     setLoading(true);
     try {

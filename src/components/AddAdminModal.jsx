@@ -32,11 +32,17 @@ export default function AddAdminModal({ currentUser, onClose, onAdded }) {
   async function createAdmin(e) {
     e.preventDefault();
     setError("");
-    if (pin.length < 4) return setError("PIN should be at least 4 digits.");
+    if (pin.length < 6) return setError("PIN should be at least 6 digits (Supabase requires this).");
     if (pin !== confirmPin) return setError("PINs don't match.");
     setBusy(true);
     try {
       await registerUser({ name, pin });
+      // registerUser() calls supabase.auth.signUp(), which silently swaps
+      // the browser's active session to the brand-new admin. Restore the
+      // ORIGINAL admin's session immediately, using the PIN they already
+      // confirmed a moment ago — otherwise creating a new admin would
+      // accidentally log the current admin out and in as someone else.
+      await login({ userId: currentUser.id, pin: currentPin });
       onAdded();
     } catch (err) {
       setError(err.message);

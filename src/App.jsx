@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "./lib/supabaseClient";
+import { logout } from "./lib/auth";
 import Login from "./components/Login";
 import Setup from "./components/Setup";
 import JoinPage from "./components/JoinPage";
@@ -109,7 +110,8 @@ export default function App() {
   return (
     <AppShell
       user={user}
-      onLogout={() => {
+      onLogout={async () => {
+        await logout();
         setUser(null);
         setStatus("needsLogin");
         loadUsers();
