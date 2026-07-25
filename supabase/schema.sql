@@ -1,7 +1,19 @@
--- Stokvel Manager: Supabase schema
+-- Umgalelo: schema
+
+-- A household is one trusted group sharing full access to each other's
+-- stokvels — e.g. your family. Two different households (two unrelated
+-- families/friend groups both using the app) never see each other's data.
+-- This is the actual isolation boundary for a future multi-tenant/public
+-- version; today, everyone using this deployment is in one household.
+create table if not exists households (
+  id uuid primary key default gen_random_uuid(),
+  name text not null default 'My household',
+  created_at timestamptz not null default now()
+);
 
 create table if not exists admins (
   id uuid primary key default gen_random_uuid(),
+  household_id uuid not null references households(id) on delete cascade,
   name text not null,
   -- pin_hash is kept only for backward compatibility during the migration
   -- to real Supabase Auth sessions (see auth_user_id below) — new admins
@@ -16,6 +28,7 @@ create table if not exists admins (
 
 create table if not exists stokvels (
   id uuid primary key default gen_random_uuid(),
+  household_id uuid not null references households(id) on delete cascade,
   owner_id uuid not null references admins(id) on delete cascade,
   name text not null,
   default_contribution numeric, -- null if every member's amount is set individually
@@ -89,34 +102,32 @@ alter table payout_rounds enable row level security;
 alter table audit_log enable row level security;
 alter table join_requests enable row level security;
 
--- Real enforcement, not the trust-based placeholder from before: every
--- policy below checks that the request comes from a Supabase Auth session
--- (auth.uid()) belonging to a row in `admins`. This is a *shared-family*
--- model, not per-owner isolation — any logged-in admin can see/manage
--- every stokvel, matching how the app's UI already works (all admins see
--- the full stokvel list). If this ever needs to isolate data between
--- separate paying customers/strangers, add owner_id = the-requesting-
--- admin's-id checks on top of the "is a real admin" check below.
-create or replace function is_authenticated_admin()
-returns boolean
+-- Real enforcement, scoped per household: every policy below checks that
+-- the request comes from a Supabase Auth session (auth.uid()) belonging
+-- to an admin in the SAME household as the row being accessed. Two
+-- different households (unrelated families/friend groups) can never see
+-- each other's stokvels, members, contributions, or payouts — this is
+-- the actual isolation boundary for running more than one group on the
+-- same deployment.
+create or replace function current_admin_household()
+returns uuid
 language sql
 security definer
 set search_path = public
 as $$
-  select exists (
-    select 1 from admins where auth_user_id = auth.uid()
-  );
+  select household_id from admins where auth_user_id = auth.uid() limit 1;
 $$;
 
--- The login screen (and its lockout counter) necessarily runs BEFORE any
--- Supabase Auth session exists — it's what determines whether one gets
--- created. So `admins` needs a pre-auth read/write carve-out. This is far
--- lower-risk than the old blanket `using (true)` on every table: this row
--- only contains a name and a lockout counter, never anything resembling a
--- credential (that's now Supabase Auth's job, not this table's). Worst
--- case if someone abuses this directly against the anon key is resetting
--- their own lockout counter — actual PIN verification is still gated by
--- Supabase Auth's own sign-in checks either way.
+-- KNOWN GAP, separate from data isolation above: the login screen
+-- (Login.jsx) currently shows a dropdown of admin names to pick from
+-- before entering a PIN, and that list is still fetched with no household
+-- filter (see admins_select_for_login below) — meaning admin *names*
+-- (not their data) are visible across households pre-login. That's
+-- harmless for one family, but before onboarding a second real household,
+-- the login flow itself needs a redesign (e.g. a household-specific
+-- link/slug, or username-based login) rather than "pick from every name
+-- in the database." Data isolation (stokvels/members/money) is fully
+-- fixed below regardless.
 create policy "admins_select_for_login" on admins
   for select using (true);
 create policy "admins_update_lockout" on admins
@@ -130,30 +141,56 @@ create policy "admins_update_lockout" on admins
 -- admins table is currently empty, as a one-time bootstrap.
 create policy "admins_insert_by_existing_admin" on admins
   for insert with check (
-    is_authenticated_admin() or not exists (select 1 from admins)
+    household_id = current_admin_household() or not exists (select 1 from admins)
   );
 
-create policy "stokvels_by_admins" on stokvels
-  for all using (is_authenticated_admin()) with check (is_authenticated_admin());
-create policy "members_by_admins" on members
-  for all using (is_authenticated_admin()) with check (is_authenticated_admin());
-create policy "contributions_by_admins" on contributions
-  for all using (is_authenticated_admin()) with check (is_authenticated_admin());
-create policy "payout_rounds_by_admins" on payout_rounds
-  for all using (is_authenticated_admin()) with check (is_authenticated_admin());
+create policy "stokvels_by_household" on stokvels
+  for all using (household_id = current_admin_household())
+  with check (household_id = current_admin_household());
+
+create policy "members_by_household" on members
+  for all using (
+    exists (select 1 from stokvels s where s.id = members.stokvel_id and s.household_id = current_admin_household())
+  )
+  with check (
+    exists (select 1 from stokvels s where s.id = members.stokvel_id and s.household_id = current_admin_household())
+  );
+
+create policy "contributions_by_household" on contributions
+  for all using (
+    exists (select 1 from stokvels s where s.id = contributions.stokvel_id and s.household_id = current_admin_household())
+  )
+  with check (
+    exists (select 1 from stokvels s where s.id = contributions.stokvel_id and s.household_id = current_admin_household())
+  );
+
+create policy "payout_rounds_by_household" on payout_rounds
+  for all using (
+    exists (select 1 from stokvels s where s.id = payout_rounds.stokvel_id and s.household_id = current_admin_household())
+  )
+  with check (
+    exists (select 1 from stokvels s where s.id = payout_rounds.stokvel_id and s.household_id = current_admin_household())
+  );
+
 create policy "audit_log_insert" on audit_log
-  for insert with check (is_authenticated_admin());
+  for insert with check (current_admin_household() is not null);
 create policy "audit_log_select" on audit_log
-  for select using (is_authenticated_admin());
+  for select using (
+    admin_id in (select id from admins where household_id = current_admin_household())
+  );
 
 -- join_requests stays intentionally open to INSERT from anyone — that's
 -- the whole point of the public invite-code flow (a prospective member
 -- who isn't an admin, and has no Supabase Auth session at all, still
 -- needs to be able to submit a request). Reading/approving requests is
--- restricted to real admins.
+-- restricted to admins in the SAME household as the stokvel being joined.
 create policy "join_requests_insert_public" on join_requests
   for insert with check (true);
-create policy "join_requests_manage_by_admins" on join_requests
-  for select using (is_authenticated_admin());
-create policy "join_requests_update_by_admins" on join_requests
-  for update using (is_authenticated_admin());
+create policy "join_requests_select_by_household" on join_requests
+  for select using (
+    exists (select 1 from stokvels s where s.id = join_requests.stokvel_id and s.household_id = current_admin_household())
+  );
+create policy "join_requests_update_by_household" on join_requests
+  for update using (
+    exists (select 1 from stokvels s where s.id = join_requests.stokvel_id and s.household_id = current_admin_household())
+  );

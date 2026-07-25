@@ -26,11 +26,34 @@ securely, and see the group's activity summarized with charts.
 - Modern, formal visual design — navy/gold palette, Fraunces/Inter typography, a soft animated
   gradient background, and a rotating-circle logo.
 
-## Upgrading an existing project (you have one already)
+## Upgrading an existing project (you have one already, again)
 
-Your live Umgalelo currently has one admin (Ndalo) created under the old
-PIN-hash system. Here's how to move it to the new, properly-secured setup
-without starting over:
+If you've already run `migration_auth_upgrade.sql` from before (real
+Supabase Auth login working), there's one more migration on top of that:
+
+1. **Run the household isolation migration.** Supabase dashboard → **SQL
+   Editor** → paste all of `supabase/migration_households.sql` → **Run**.
+   This backfills your existing admin(s) and stokvel(s) into a single
+   "household" automatically — nothing you can currently see changes or
+   disappears. It just adds the structure needed so a second, unrelated
+   household could one day use the same deployment without ever seeing
+   your family's data (or vice versa).
+2. Pull the latest code and redeploy as normal — no dashboard settings to
+   change this time, no admin accounts need recreating.
+3. **Known limitation this migration does NOT fix**: the login screen
+   still lists every admin's name across the whole database (harmless
+   with one household, not fine with two) — see the note at the bottom of
+   `migration_households.sql`. This is intentionally left as follow-up
+   work, not silently swept under the rug — the actual financial/personal
+   data is fully isolated regardless.
+
+## Upgrading an existing project (from the very first version)
+
+Your live Umgalelo may have started with one admin (Ndalo) created under
+the original PIN-hash system, before any of the Supabase Auth work above.
+Here's how to move it to the new, properly-secured setup without starting
+over — do this section FIRST if you haven't already, then the household
+migration above:
 
 1. **Run the migration SQL.** Supabase dashboard → **SQL Editor** → paste
    all of `supabase/migration_auth_upgrade.sql` → **Run**. This upgrades
@@ -128,18 +151,23 @@ variables → Deploy.
   so Supabase's own battle-tested authentication handles password storage
   and session security — the app itself no longer needs to compare hashes.
   A 5-attempt app-level lockout still applies on top.
-- **Database access is enforced at the database, not just the app.**
-  Every table's Row Level Security policy now checks for a real, valid
-  Supabase Auth session belonging to an actual admin (`is_authenticated_admin()`
-  in `schema.sql`) — not the old `using (true)` that trusted every request.
-  Concretely: someone with just your public Supabase URL/anon key (which
-  is unavoidably visible in any deployed frontend) can no longer read or
-  write stokvel data without actually being a logged-in admin.
-- This is a **shared-family model, not per-owner isolation** — any logged-in
-  admin can see and manage every stokvel, matching how the app already
-  works today. If this ever needs to isolate data between separate,
-  unrelated groups/customers, add an `owner_id`-based check on top of
-  `is_authenticated_admin()` in each policy.
+- **Data is isolated per household, not just per "any authenticated admin."**
+  Every table's Row Level Security policy checks that the requesting admin
+  belongs to the SAME household as the row (`current_admin_household()` in
+  `schema.sql`) — stokvels, members, contributions, and payouts. Two
+  unrelated households (say, your family and a friend's, both using the
+  same deployment) can never see or touch each other's data, even though
+  they'd share the same public Supabase URL/anon key. Within one household,
+  every admin still sees everything, matching how your family actually
+  uses it.
+- **Known remaining gap, not yet fixed**: the login screen's admin-name
+  dropdown still queries across every household with no filter — meaning
+  admin *names* (not their data) would be visible across unrelated
+  households if a second one ever used this deployment. See the note in
+  `migration_households.sql`. Fixing this means redesigning the login
+  flow itself (e.g. a household-specific link, or username/email-based
+  login instead of "pick your name from a list") — worth doing before
+  ever onboarding a second real, unrelated household.
 - **Admin creation is still gated**: the very first administrator is
   created once, when the `admins` table is empty (unavoidable bootstrap
   step). Every admin after that can only be added by someone already
@@ -162,9 +190,14 @@ variables → Deploy.
 
 ## What's left to build
 
+- **Public sign-up** — right now, a brand new household can only be created via
+  the one-time "zero admins exist yet" bootstrap screen. A real public
+  version needs an always-available "create your own household" flow.
+- **Fix the login screen's cross-household name list** (see security notes
+  above) — required before a second unrelated household ever uses this.
 - Export contribution/payout history to PDF or Excel.
 - Automated reminders (WhatsApp/SMS/email) for members who haven't paid this period.
 - Edit stokvel settings after creation.
-- If this ever needs true per-group isolation (separate unrelated customers,
-  not just your family), add `owner_id` scoping on top of the current
-  "any authenticated admin" policies — see the note in `schema.sql`.
+- If actually launching publicly: re-read the "$0 funding" constraints
+  discussed separately — Vercel's free tier prohibits commercial use, and
+  POPIA obligations apply once you're holding strangers' financial/contact data.

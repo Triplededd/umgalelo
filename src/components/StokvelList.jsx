@@ -56,6 +56,7 @@ export default function StokvelList({ onSelect, currentUser }) {
         default_contribution: variable ? null : parseFloat(defaultContribution) || 0,
         period_type: periodType,
         owner_id: currentUser.id,
+        household_id: currentUser.household_id,
       })
       .select()
       .single();

@@ -36,7 +36,7 @@ export default function AddAdminModal({ currentUser, onClose, onAdded }) {
     if (pin !== confirmPin) return setError("PINs don't match.");
     setBusy(true);
     try {
-      await registerUser({ name, pin });
+      await registerUser({ name, pin, householdId: currentUser.household_id });
       // registerUser() calls supabase.auth.signUp(), which silently swaps
       // the browser's active session to the brand-new admin. Restore the
       // ORIGINAL admin's session immediately, using the PIN they already

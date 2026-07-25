@@ -14,22 +14,36 @@ function syntheticEmail(adminId) {
 // Authentication -> Providers -> Email -> turn OFF "Confirm email".
 // These synthetic addresses can never receive a real confirmation email,
 // so leaving confirmation on would permanently lock every admin out right
-// after they sign up (signUp succeeds, but signInWithPassword then fails
-// with "Email not confirmed" forever). This is a dashboard setting, not
-// something fixable from client code.
+// after they sign up.
 
-// Supabase's default minimum password length is 6 characters. PINs are
-// validated at 6+ digits in Setup.jsx / AddAdminModal.jsx to match —
-// if you ever lower that in the UI, also lower "Minimum password length"
-// under Authentication -> Policies in the Supabase dashboard, or signUp/
-// signInWithPassword will reject shorter PINs.
+// PINs are validated at 6+ digits in Setup.jsx / AddAdminModal.jsx to match
+// Supabase's default minimum password length.
 
-export async function registerUser({ name, pin }) {
+/**
+ * Create a new admin. If `householdId` is given, the new admin JOINS that
+ * household (used when an existing admin adds a colleague/family member —
+ * see AddAdminModal.jsx). If omitted, a BRAND NEW household is created
+ * first and the admin becomes its first member — used only for the very
+ * first admin ever (Setup.jsx's bootstrap screen).
+ */
+export async function registerUser({ name, pin, householdId }) {
+  let household_id = householdId;
+
+  if (!household_id) {
+    const { data: household, error: householdError } = await supabase
+      .from("households")
+      .insert({ name: `${name}'s household` })
+      .select()
+      .single();
+    if (householdError) throw householdError;
+    household_id = household.id;
+  }
+
   // 1. Create the admins row first so we have an id to build the
   //    synthetic email from.
   const { data: admin, error: insertError } = await supabase
     .from("admins")
-    .insert({ name })
+    .insert({ name, household_id })
     .select()
     .single();
   if (insertError) throw insertError;
@@ -73,7 +87,7 @@ export async function login({ userId, pin }) {
     // No pin_hash to check anymore — Supabase Auth now owns password
     // verification. failed_attempts/locked_until stay here purely for the
     // app-level "locked out, try again in N minutes" UX.
-    .select("id, name, failed_attempts, locked_until")
+    .select("id, name, household_id, failed_attempts, locked_until")
     .eq("id", userId)
     .single();
   if (error) throw error;
